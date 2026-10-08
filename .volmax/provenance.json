@@ -1,0 +1,25 @@
+{
+  "baseline_commit": "d3c1ac9997e1ba58049506f9427611a64b21947b",
+  "baseline_tree": "252d4da5236053c7dfbbf4ae4ce5fd90e9a0de8f",
+  "behavior": {
+    "callbacks": false,
+    "executable": false,
+    "network_calls": false,
+    "telemetry": false
+  },
+  "canonical_url": "https://github.com/VolMax-Studio/Power_Signal_Tools_Portfolio",
+  "default_branch_at_recording": "main",
+  "license": {
+    "detected_spdx": null,
+    "files": [],
+    "note": "This provenance record does not grant or alter license rights."
+  },
+  "owner": "VolMax-Studio",
+  "record_id": "urn:volmax:github:VolMax-Studio/Power_Signal_Tools_Portfolio:d3c1ac9997e1ba58049506f9427611a64b21947b",
+  "record_type": "volmax.repository-provenance",
+  "record_version": 1,
+  "recorded_at": "2026-10-08T19:24:25+00:00",
+  "repository": "VolMax-Studio/Power_Signal_Tools_Portfolio",
+  "schema": "urn:volmax:provenance:v1",
+  "scope": "Repository identity and baseline commit only; historical tags, releases, evidence, authorship, and existing file bytes are unchanged."
+}
