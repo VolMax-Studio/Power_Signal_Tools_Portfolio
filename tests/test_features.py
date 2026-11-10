@@ -14,18 +14,12 @@ Optional:     pywt (for wavelet tests beyond Haar)
 
 import numpy as np
 import pytest
-import sys
-import os
-
-# Allow running from repo root without installation
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-
-from features.rms import windowed_rms, block_rms
-from features.thd import compute_thd
-from features.spectral import compute_fft, dominant_frequencies
-from features.wavelet import dwt_decompose, detect_transients
-from anomaly.zscore import rolling_zscore, find_anomalies
-from anomaly.envelope import hilbert_envelope, detect_sags_swells
+from power_signal_tools.features.rms import windowed_rms, block_rms
+from power_signal_tools.features.thd import compute_thd
+from power_signal_tools.features.spectral import compute_fft, dominant_frequencies
+from power_signal_tools.features.wavelet import dwt_decompose, detect_transients
+from power_signal_tools.anomaly.zscore import rolling_zscore, find_anomalies
+from power_signal_tools.anomaly.envelope import hilbert_envelope, detect_sags_swells
 
 # ─── Shared fixtures ────────────────────────────────────────────────────────
 
@@ -271,7 +265,7 @@ class TestWavelet:
         """Haar decomposition should not require pywt."""
         v = make_sine()
         # Direct call to fallback
-        from features.wavelet import _haar_decompose
+        from power_signal_tools.features.wavelet import _haar_decompose
         coeffs = _haar_decompose(v, level=3)
         assert len(coeffs) == 4  # [cA3, cD3, cD2, cD1]
 
