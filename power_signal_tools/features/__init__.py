@@ -1,4 +1,9 @@
-from .rms import calculate_rms, rolling_rms
-from .thd import calculate_thd
-from .spectral import compute_fft, find_spectral_peaks
-from .wavelet import dwt_step, dwt_decomposition, detect_transients_dwt
+from .rms import windowed_rms, block_rms
+from .thd import compute_thd
+from .spectral import SpectralResult, compute_fft, dominant_frequencies
+from .wavelet import dwt_decompose, detect_transients
+
+__all__ = [
+    "windowed_rms", "block_rms", "compute_thd", "SpectralResult",
+    "compute_fft", "dominant_frequencies", "dwt_decompose", "detect_transients",
+]

@@ -1,83 +1,141 @@
 """
-RMS (Root Mean Square) Utilities
-===============================
-Provides functions to compute global and rolling RMS values for
-single-channel and multi-channel signals.
+rms.py — Windowed Root Mean Square
+===================================
+Computes RMS over a sliding window for 1-D or 2-D (multi-channel) arrays.
+
+Physical context
+----------------
+For a pure sine wave v(t) = Vp * sin(2*pi*f*t), the true RMS is Vp / sqrt(2).
+This holds only when the window contains an integer number of cycles, or when
+the window is large enough that edge effects are negligible (window >> 1/f).
+For non-periodic or transient signals, windowed RMS tracks instantaneous power
+content without cycle-alignment assumptions.
+
+API
+---
+windowed_rms(signal, window, step, axis) -> np.ndarray
 """
 
 import numpy as np
+from typing import Optional, Union
 
-def calculate_rms(x, axis=0):
-    """Computes the global Root Mean Square (RMS) value along a specified axis.
-    
-    Args:
-        x (array_like): Input signal array.
-        axis (int, optional): Axis along which the RMS is computed. Defaults to 0.
-        
-    Returns:
-        float or ndarray: Global RMS value.
+
+def windowed_rms(
+    signal: np.ndarray,
+    window: int,
+    step: int = 1,
+    axis: int = 0,
+) -> np.ndarray:
     """
-    x = np.asarray(x)
-    return np.sqrt(np.mean(np.square(x), axis=axis))
+    Compute windowed RMS along the specified axis.
 
+    Parameters
+    ----------
+    signal : np.ndarray
+        1-D array (N,) for single channel, or 2-D array (N, C) for C channels.
+        N is the number of samples, C is the number of channels.
+    window : int
+        Number of samples per RMS window. For a 50 Hz signal sampled at
+        10 kHz, one full cycle = 200 samples.
+    step : int, optional
+        Stride between consecutive windows. step=1 gives a fully-overlapping
+        rolling RMS. step=window gives non-overlapping (block) RMS.
+        Default: 1.
+    axis : int, optional
+        Axis along which to slide the window. Default: 0 (time axis).
 
-def rolling_rms(x, window_size, padding='reflect'):
-    """Computes the rolling RMS of a 1D signal or 2D multi-channel signal.
-    
-    For 2D inputs, the rolling window is applied along the time dimension (axis 0),
-    treating each column as an independent channel.
-    
-    Args:
-        x (array_like): Input 1D signal or 2D signal (shape: [samples, channels]).
-        window_size (int): Size of the sliding window (must be positive).
-        padding (str, optional): Padding mode for boundaries. Supported: 'reflect', 'zero', 'none'.
-            Defaults to 'reflect'.
-            
-    Returns:
-        ndarray: Rolling RMS signal. If padding is 'none', shape is reduced by window_size - 1.
+    Returns
+    -------
+    np.ndarray
+        RMS values. Shape depends on input:
+        - 1-D input (N,)     -> (M,) where M = floor((N - window) / step) + 1
+        - 2-D input (N, C)   -> (M, C) if axis=0
+
+    Raises
+    ------
+    ValueError
+        If window > signal length along the specified axis, or step < 1.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> fs = 10_000  # 10 kHz
+    >>> t = np.arange(0, 0.1, 1/fs)          # 100 ms
+    >>> v = 230 * np.sqrt(2) * np.sin(2*np.pi*50*t)  # 230 Vrms at 50 Hz
+    >>> rms = windowed_rms(v, window=200, step=200)   # one window per cycle
+    >>> np.allclose(rms, 230.0, atol=0.01)
+    True
     """
-    x = np.asarray(x)
-    if window_size <= 0:
-        raise ValueError("Window size must be a positive integer.")
-        
-    is_1d = x.ndim == 1
-    if is_1d:
-        x = x[:, np.newaxis]
-        
-    samples, channels = x.shape
-    
-    # Square the signal
-    squared = np.square(x)
-    
-    # Setup convolution kernel
-    kernel = np.ones(window_size) / window_size
-    
-    results = []
-    for col in range(channels):
-        channel_data = squared[:, col]
-        
-        if padding == 'none':
-            # Valid convolution
-            mean_squared = np.convolve(channel_data, kernel, mode='valid')
-        elif padding == 'zero':
-            # Same convolution, zero padded
-            mean_squared = np.convolve(channel_data, kernel, mode='same')
-        elif padding == 'reflect':
-            # Reflect pad to avoid edge attenuation
-            pad_width = window_size // 2
-            padded_data = np.pad(channel_data, pad_width, mode='reflect')
-            conv = np.convolve(padded_data, kernel, mode='valid')
-            
-            # Trim to match original length
-            if len(conv) > samples:
-                conv = conv[:samples]
-            elif len(conv) < samples:
-                conv = np.pad(conv, (0, samples - len(conv)), mode='edge')
-            mean_squared = conv
-        else:
-            raise ValueError(f"Unsupported padding mode: {padding}")
-            
-        results.append(np.sqrt(np.maximum(0.0, mean_squared)))
-        
-    out = np.column_stack(results)
-    return out.squeeze() if is_1d else out
+    signal = np.asarray(signal, dtype=np.float64)
+    if signal.ndim not in (1, 2):
+        raise ValueError("signal must be a 1-D or 2-D array")
+    if signal.size == 0 or not np.all(np.isfinite(signal)):
+        raise ValueError("signal must be nonempty with finite values")
+    if not isinstance(window, (int, np.integer)) or isinstance(window, (bool, np.bool_)) or window < 1:
+        raise ValueError("window must be a positive integer")
+    if not isinstance(step, (int, np.integer)) or isinstance(step, (bool, np.bool_)):
+        raise ValueError("step must be an integer >= 1")
+    if axis not in range(-signal.ndim, signal.ndim):
+        raise ValueError("axis out of range")
+    if step < 1:
+        raise ValueError(f"step must be >= 1, got {step}")
+
+    n = signal.shape[axis]
+    if window > n:
+        raise ValueError(
+            f"window ({window}) exceeds signal length ({n}) on axis {axis}"
+        )
+
+    # Move target axis to front for uniform indexing
+    signal = np.moveaxis(signal, axis, 0)  # shape: (N, ...) or (N,)
+    n = signal.shape[0]
+
+    indices = np.arange(0, n - window + 1, step)
+    n_windows = len(indices)
+
+    if signal.ndim == 1:
+        # Fast path: stride trick for 1-D
+        shape = (n_windows, window)
+        strides = (signal.strides[0] * step, signal.strides[0])
+        windows = np.lib.stride_tricks.as_strided(signal, shape=shape, strides=strides)
+        result = np.sqrt(np.mean(windows ** 2, axis=1))
+    else:
+        # Multi-channel: iterate windows (N typically small enough)
+        rest_shape = signal.shape[1:]
+        result = np.empty((n_windows,) + rest_shape, dtype=np.float64)
+        for i, start in enumerate(indices):
+            chunk = signal[start : start + window]
+            result[i] = np.sqrt(np.mean(chunk ** 2, axis=0))
+
+    return result
+
+
+def block_rms(signal: np.ndarray, fs: float, freq: float = 50.0) -> np.ndarray:
+    """
+    Convenience wrapper: non-overlapping RMS with window = one grid cycle.
+
+    Parameters
+    ----------
+    signal : np.ndarray
+        1-D time-domain voltage or current samples.
+    fs : float
+        Sampling frequency [Hz].
+    freq : float
+        Grid fundamental frequency [Hz]. Default: 50.0 (Europe/Serbia).
+
+    Returns
+    -------
+    np.ndarray
+        Per-cycle RMS values.
+
+    Notes
+    -----
+    Window length is rounded to the nearest integer. For fs=10000, freq=50:
+    window = 200 samples exactly. For fs=10000, freq=60: window = 167 samples
+    (0.3% cycle-length error — acceptable for power monitoring).
+    """
+    from .._validation import positive_finite
+    fs = positive_finite(fs, "fs")
+    freq = positive_finite(freq, "freq")
+    window = max(1, int(round(fs / freq)))
+    return windowed_rms(signal, window=window, step=window)

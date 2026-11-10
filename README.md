@@ -1,102 +1,151 @@
-# power_signal_tools
+# VolMax Power Signal Tools
 
-Importable Python library for power quality signal analysis. Domain-grounded utilities for grid monitoring, embedded signal processing, and power electronics validation.
+**Open-source Python tools for analyzing already-recorded electrical signals.**
+A small signal-processing library plus a CSV-to-JSON command-line report.
+It runs completely in software: no sensors, wiring, meter or network API needed.
 
-The design priority: physically correct implementations with documented tolerances, not demo notebooks.
+Status: **0.2.0rc1 — release candidate.** Python 3.10+; MIT licensed.
+Not a certified power-quality analyzer or a substitute for calibrated measurements.
 
-```python
-from power_signal_tools.features import windowed_rms, compute_thd, compute_fft
-from power_signal_tools.anomaly import rolling_zscore, hilbert_envelope
-```
+## What it does
 
-## Modules
-
-### `features/`
-
-| Module | Function | Description |
+| Feature | Public Python API | Interpretation |
 |---|---|---|
-| `rms.py` | `windowed_rms(signal, window, step)` | Sliding-window RMS, 1-D and multi-channel |
-| `rms.py` | `block_rms(signal, fs, freq)` | Per-cycle RMS (one window per grid cycle) |
-| `thd.py` | `compute_thd(signal, fs, fundamental_hz)` | THD-F and THD-R via FFT harmonic extraction |
-| `spectral.py` | `compute_fft(signal, fs)` | One-sided FFT with physical Hz axis and RMS magnitudes |
-| `spectral.py` | `dominant_frequencies(result, n_peaks)` | N largest spectral peaks |
-| `wavelet.py` | `dwt_decompose(signal, wavelet, level)` | Multi-level DWT decomposition |
-| `wavelet.py` | `detect_transients(signal, fs, wavelet)` | Sub-cycle transient localization via detail coefficients |
+| Window and per-cycle RMS | windowed_rms, block_rms | Sampled-signal RMS in input units |
+| Harmonic estimation | compute_thd | THD-F and modelled-harmonic THD-R, known fundamental |
+| FFT | compute_fft, dominant_frequencies | Frequency-domain diagnostic (RMS-scaled) |
+| Wavelets | dwt_decompose, detect_transients | Time-localized transient candidates |
+| Anomaly scores | rolling_zscore, find_anomalies | Statistical departures from recent samples |
+| Hilbert envelope | hilbert_envelope, detect_sags_swells | Offline narrowband amplitude-event candidates |
+| File reporting | volmax-signal-report | Reproducible JSON output from CSV |
 
-### `anomaly/`
+No historical duplicate packages: the only maintained implementation lives under
+power_signal_tools/. The 39 original tests plus independent edge-case and CLI
+tests import that package directly.
 
-| Module | Function | Description |
-|---|---|---|
-| `zscore.py` | `rolling_zscore(signal, window)` | Causal rolling z-score for spike and drift detection |
-| `zscore.py` | `find_anomalies(z, threshold)` | Extract sample indices where `|z| > threshold` |
-| `envelope.py` | `hilbert_envelope(signal, fs)` | Instantaneous amplitude envelope via analytic signal |
-| `envelope.py` | `detect_sags_swells(envelope, fs, nominal_rms)` | IEC 61000-4-11 sag/swell event classification |
+## Install
 
-## Quick start
+From a copy of this repository:
 
-```python
-import numpy as np
-from power_signal_tools.features.rms import block_rms
-from power_signal_tools.features.thd import compute_thd
-from power_signal_tools.features.spectral import compute_fft
+    python -m pip install -e ".[test,wavelets]"
+    python -m pytest -q
 
-fs = 10_000.0  # Hz
-t = np.arange(0, 0.2, 1/fs)
-v = 230*np.sqrt(2) * np.sin(2*np.pi*50*t)
+To install just the runtime and the optional wavelet dependency:
 
-# Per-cycle RMS
-rms = block_rms(v, fs=fs, freq=50.0)   # array of 10 values ≈ 230.0 V
+    python -m pip install .
 
-# THD
-thd_f, thd_r, harmonics = compute_thd(v, fs=fs)
-print(f"THD-F: {thd_f*100:.2f}%")
+PyWavelets is optional: use pip install ".[wavelets]" for db4 and sym8 transforms.
+Without it, only the basic Haar fallback is available.
 
-# Spectrum with physical axis
-result = compute_fft(v, fs=fs)
-# result.freqs_hz  → [0.0, 5.0, 10.0, ..., 5000.0] Hz
-# result.magnitude → RMS amplitude at each frequency bin
-```
+## Run the fully synthetic demo
 
-```python
-from power_signal_tools.anomaly.zscore import rolling_zscore, find_anomalies
+    python examples/generate_demo.py demo-synthetic.csv
+    volmax-signal-report demo-synthetic.csv       --column voltage_v --fs 10000 --fundamental 50       --harmonics 10 --unit V --output demo-report.json
 
-# Detect current spikes in a measurement stream
-z = rolling_zscore(current_signal, window=200)  # 200 samples = 1 cycle at 10kHz/50Hz
-anomaly_indices = find_anomalies(z, threshold=3.5)
-```
+Or equivalently:
 
-## Test suite
+    python -m power_signal_tools demo-synthetic.csv       --column voltage_v --fs 10000 --fundamental 50       --unit V --output demo-report.json
 
-```bash
-pip install -r requirements.txt
-pytest tests/test_features.py -v
-```
+The example is a mathematically constructed 50 Hz waveform with RMS
+fundamental 230 V and third harmonic 10% of the fundamental. **It is not a
+real measured voltage recording.** The expected results are:
 
-39 tests. All assertions are analytically verified against known signals
-(pure sines, harmonic injections, step changes). Tolerances are documented
-with physical justification in each test.
+| Metric | Expected |
+|---|---:|
+| Fundamental RMS | 230.000 V |
+| THD-F | 0.100000 (10.000%) |
+| THD-R (modelled harmonics) | 0.099503719 (9.95037%) |
+| Total sample RMS | ~231.147 V |
 
-**Results on Python 3.12 / numpy 2.x / scipy 1.14:**
-```
-39 passed in 0.96s
-```
+The JSON report includes a SHA-256 fingerprint of the *input CSV bytes*,
+the explicit sampling rate, signal units, fundamental frequency, harmonic
+magnitudes, numeric results, and a limitations section. The hash binds the
+calculation to those file bytes; it does **not** authenticate the sensor,
+calibration, person, or time of acquisition.
 
-## Design notes
+## Python example
 
-**THD implementation:** Uses Hann window + nearest-bin harmonic extraction. Coherent gain correction applied so windowing does not attenuate the RMS estimate. THD-F matches IEC 61000-3-2 definition (ratio to fundamental); THD-R is bounded in [0, 1).
+    import numpy as np
+    from power_signal_tools import compute_thd, compute_fft, block_rms
 
-**Hilbert envelope prefilter:** The narrow Butterworth bandpass (default BW=20 Hz) uses `sosfiltfilt` (SOS form). For narrow fractional bandwidths (< 5%), `(b,a)` form butter is numerically unstable — gain errors of 3–10× observed. SOS form eliminates this. Edge settling time: ~800 samples (80 ms at 10 kHz) for 20 Hz bandwidth. For clean signals (THD < 5%), use `prefilter=False`.
+    fs = 10_000
+    t = np.arange(2000) / fs
+    v = 230 * np.sqrt(2) * (
+        np.sin(2*np.pi*50*t) + 0.1*np.sin(2*np.pi*150*t)
+    )
 
-**Wavelet fallback:** `dwt_decompose` uses PyWavelets if available; falls back to a numpy-only Haar implementation. For production use on db4/sym8, install PyWavelets.
+    thd_f, thd_r, harmonics_rms = compute_thd(
+        v, fs=fs, fundamental_hz=50, n_harmonics=10
+    )
+    print(thd_f, thd_r)  # ~0.1, ~0.099503719
 
-**Rolling z-score causality:** Default mode is causal (past W samples only) — deployable in real-time embedded systems. Pass `centered=True` for offline analysis with better temporal localization.
+    per_cycle_rms = block_rms(v, fs=fs, freq=50)
+    spectrum = compute_fft(v, fs=fs)
+    print(per_cycle_rms.mean(), spectrum.freqs_hz[np.argmax(spectrum.magnitude)])
 
-## Scope
+## Measurement and numerical boundaries
 
-Covers: power quality disturbance analysis · NILM feature extraction · grid voltage monitoring · embedded sensor signal processing · battery current/voltage analysis.
+- **Known sampling rate and grid fundamental required.** The tool does not
+  infer timestamps, check sampling intervals, estimate grid frequency or
+  reconstruct missing samples. Do not feed irregularly sampled CSV values
+  as though they were uniform.
+- **THD is computed by a joint least-squares harmonic fit** at the supplied
+  fundamental and harmonics (1..H) with a DC column. This avoids nearest-FFT-
+  bin errors for non-integer periods. The reported THD-R is defined as
+  sqrt(sum of RMS harmonic powers for h>=2) divided by sqrt(sum of RMS powers
+  for h>=1). DC, interharmonics and unexplained residuals are **excluded**.
+  This is explicitly a modelled-harmonic ratio, not raw-signal RMS distortion.
+- This is **not** an IEC 61000-4-7/4-30/EN 50160 / IEEE 519 compliant
+  measurement implementation. No harmonic grouping/interharmonic grouping,
+  prescribed observation windows, instrument calibration, uncertainty
+  budget or conformity decision is provided.
+- **Stationarity:** evaluate stable windows, not one long recording with
+  changing load and frequency. The CLI limits input to 250,000 samples
+  and the harmonic fit limits inputs similarly.
+- **FFT** defaults to a Hann window and reports RMS bin magnitude. Peaks
+  may be biased by leakage if the input is not bin-coherent; do not confuse
+  the FFT peak amplitude with the fitted harmonic RMS.
+- **Hilbert envelope** analysis is offline (filtfilt is noncausal) and has
+  edge artifacts and narrowband assumptions. Its event labels are exploratory,
+  not proof of grid-code noncompliance.
+- **Wavelet and rolling z-score** produce anomaly *candidates*. Neither
+  algorithm proves a fault classification.
+- **Raw inputs** should have documented units, measurement provenance,
+  sampling rate and an independent calibration record when available.
+  These upstream properties cannot be reconstructed from a CSV alone.
 
-Not in scope: streaming/real-time I/O, hardware drivers, communication protocols.
+## Software verification
+
+Run:
+
+    python -m pytest -q
+
+The test suite includes pure sine-wave identities, multi-harmonic analytical
+references, 50/60/50.2 Hz non-coherent windows, DC-offset invariance, Nyquist
+bin scaling, NaN/Inf rejection, statistical anomaly regressions, API import
+checks and a CSV-to-JSON end-to-end test. Tests run on *synthetic mathematical
+signals*, not physical sensors.
+
+A GitHub Actions workflow runs the same tests on supported Python versions.
+See docs/VALIDATION.md for reproduction instructions and known open limits.
+
+## Repository structure
+
+    power_signal_tools/        # only canonical importable package
+      features/                # RMS, harmonic fitting, FFT, wavelets
+      anomaly/                 # z-score, envelope and event extraction
+      cli.py                   # uniform CSV -> JSON report
+    examples/generate_demo.py  # reproducible synthetic CSV
+    tests/                     # analytical and CLI regression checks
+    docs/VALIDATION.md         # independent reproduction steps
+    LICENSE                    # MIT
+    pyproject.toml             # build + dependencies + console script
 
 ## License
 
-MIT
+Copyright (c) 2026 Ivan Nestorov. Source code and original documentation
+are provided under the [MIT License](LICENSE). Third-party Python libraries
+are dependencies with their respective separate licenses; their source is
+not bundled into this repository.
+
+Developed by Ivan Nestorov / VolMax Studio Lab, Serbia.
